@@ -9,18 +9,31 @@ git clone --depth 1 https://github.com/can1357/oh-my-pi.git "$TMP_DIR"
 
 cd "$TMP_DIR"
 
+apply_patch() {
+  local pattern="$1"
+  local replacement="$2"
+  local file="$3"
+  local expected_grep="$4"
+  
+  sed -i "s|$pattern|$replacement|g" "$file"
+  if [ -n "$expected_grep" ] && ! grep -q "$expected_grep" "$file"; then
+    echo "ERROR: Patch failed for $file. Expected to find: $expected_grep"
+    exit 1
+  fi
+}
+
 echo "Localizing internal dependencies..."
 cp packages/catalog/src/wire/gemini-headers.ts packages/ai/src/registry/oauth/gemini-headers.ts
 cp packages/catalog/src/wire/gemini-headers.ts packages/ai/src/providers/gemini-headers.ts
-sed -i 's|@oh-my-pi/pi-catalog/wire/gemini-headers|./gemini-headers.ts|g' packages/ai/src/registry/oauth/google-antigravity.ts packages/ai/src/providers/google-gemini-cli.ts
+apply_patch '@oh-my-pi/pi-catalog/wire/gemini-headers' './gemini-headers.ts' packages/ai/src/registry/oauth/google-antigravity.ts './gemini-headers.ts'
+apply_patch '@oh-my-pi/pi-catalog/wire/gemini-headers' './gemini-headers.ts' packages/ai/src/providers/google-gemini-cli.ts './gemini-headers.ts'
 
 echo "Patching google-gemini-cli.ts for pi compatibility..."
-sed -i 's|"token?": optionalCredentialString,|"token?": optionalCredentialString,\n\t"access?": optionalCredentialString,|g' packages/ai/src/providers/google-gemini-cli.ts
-sed -i 's|if (parsed.token === undefined|if ((parsed.token ?? parsed.access) === undefined|g' packages/ai/src/providers/google-gemini-cli.ts
-sed -i 's|accessToken: parsed.token,|accessToken: parsed.token ?? parsed.access!,|g' packages/ai/src/providers/google-gemini-cli.ts
-sed -i 's|const wireModelId = options.requestModelId ?? model.requestModelId ?? model.id;|const wireModelId = options.requestModelId ?? model.requestModelId ?? model.id;|g' packages/ai/src/providers/google-gemini-cli.ts
-sed -i 's|\[ANTIGRAVITY_DAILY_ENDPOINT, ANTIGRAVITY_SANDBOX_ENDPOINT\]|\[ANTIGRAVITY_DAILY_ENDPOINT, ANTIGRAVITY_SANDBOX_ENDPOINT, DEFAULT_ENDPOINT\]|g' packages/ai/src/providers/google-gemini-cli.ts
-sed -i 's|const CLOUD_CODE_ENDPOINT = "https://cloudcode-pa.googleapis.com";|const CLOUD_CODE_ENDPOINT = "https://daily-cloudcode-pa.googleapis.com";|g' packages/ai/src/registry/oauth/google-antigravity.ts
+apply_patch '"token?": optionalCredentialString,' '"token?": optionalCredentialString,\n\t"access?": optionalCredentialString,' packages/ai/src/providers/google-gemini-cli.ts '"access?": optionalCredentialString'
+apply_patch 'if (parsed.token === undefined' 'if ((parsed.token ?? parsed.access) === undefined' packages/ai/src/providers/google-gemini-cli.ts 'parsed.access'
+apply_patch 'accessToken: parsed.token,' 'accessToken: parsed.token ?? parsed.access!,' packages/ai/src/providers/google-gemini-cli.ts 'parsed.access!'
+apply_patch '\[ANTIGRAVITY_DAILY_ENDPOINT, ANTIGRAVITY_SANDBOX_ENDPOINT\]' '\[ANTIGRAVITY_DAILY_ENDPOINT, ANTIGRAVITY_SANDBOX_ENDPOINT, DEFAULT_ENDPOINT\]' packages/ai/src/providers/google-gemini-cli.ts 'DEFAULT_ENDPOINT'
+apply_patch 'const CLOUD_CODE_ENDPOINT = "https://cloudcode-pa.googleapis.com";' 'const CLOUD_CODE_ENDPOINT = "https://daily-cloudcode-pa.googleapis.com";' packages/ai/src/registry/oauth/google-antigravity.ts 'daily-cloudcode-pa.googleapis.com'
 
 echo "Creating pi-utils polyfill..."
 echo 'export * from "@oh-my-pi/pi-ai";' > pi-utils-polyfill.ts
@@ -32,8 +45,10 @@ cat packages/utils/src/json.ts >> pi-utils-polyfill.ts
 cat packages/utils/src/type-guards.ts >> pi-utils-polyfill.ts
 cat << 'EOF' >> pi-utils-polyfill.ts
 
+// Feature flags default to false to disable experimental upstream features gracefully
 export const $flag = (name: string) => false;
-export const $env = (name: string) => undefined;
+// Fallback to real environment variables for upstream configuration
+export const $env = (name: string) => process.env[name];
 EOF
 
 echo "Installing dependencies to allow bundling..."
@@ -56,6 +71,14 @@ echo "Patching namespaces in bundled file..."
 cd "$EXT_DIR"
 # All externalized @oh-my-pi/* imports (pi-catalog/models, pi-ai) actually come from @earendil-works/pi-ai in the runtime
 sed -i -E 's|@oh-my-pi/[a-zA-Z0-9/-]+|@earendil-works/pi-ai|g' plugin-bundled.js
+if grep -q '@oh-my-pi' plugin-bundled.js; then
+  echo "ERROR: Failed to completely patch @oh-my-pi namespace in bundle."
+  exit 1
+fi
+if ! grep -q '@earendil-works/pi-ai' plugin-bundled.js; then
+  echo "ERROR: Namespace replacement did not result in expected @earendil-works/pi-ai imports."
+  exit 1
+fi
 
 echo "Cleaning up..."
 rm -rf "$TMP_DIR"

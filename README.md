@@ -24,7 +24,7 @@ Before using the plugin, you must generate the bundled provider. You only need t
 git clone https://github.com/Masterisk-F/pi-antigravity-provider.git
 cd pi-antigravity-provider
 
-# Run the synchronization script (Requires git, sed, and bun)
+# Run the synchronization script (Requires git, sed, bun, and npx)
 ./sync.sh
 ```
 
@@ -51,7 +51,7 @@ Once inside `pi`, authenticate with Google Antigravity if you haven't already:
 /login google-antigravity
 ```
 
-You can now use `gemini-3.5-flash`, `claude-3-7-sonnet`, and other Antigravity models directly from `pi`!
+You can now use any of the Antigravity models directly from `pi`! The specific models available track dynamically with upstream changes—you can check the exact available list inside the `pi` application's model selection menu.
 
 ## 📝 License
 

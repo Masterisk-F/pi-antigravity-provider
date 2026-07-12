@@ -4,20 +4,23 @@ import { loginAntigravity, refreshAntigravityToken, streamGoogleGeminiCli, getBu
 
 export default function (pi: ExtensionAPI) {
 	pi.registerProvider("google-antigravity", {
+		id: "google-antigravity",
+		name: "Google Antigravity",
 		baseUrl: "https://daily-cloudcode-pa.googleapis.com",
-		api: "google-gemini-cli" as any,
+		api: "google-gemini-cli" as const,
 
 		models: getBundledModels("google-antigravity"),
 
 		oauth: {
 			name: "Google Antigravity",
-			login: loginAntigravity as any,
+			login: loginAntigravity as any, // Type mismatch between pi-ai and pi-coding-agent
+
 			refreshToken: (cred: OAuthCredentials) => refreshAntigravityToken(cred.refresh, (cred as any).projectId),
 			getApiKey: (cred: OAuthCredentials) => JSON.stringify(cred),
 		},
 		streamSimple: (model, context, options) => {
 			const originalModel = getBundledModels("google-antigravity").find(m => m.id === model.id);
-			return streamGoogleGeminiCli(model, context, { ...options, requestModelId: originalModel?.requestModelId } as any);
+			return streamGoogleGeminiCli(model, context, { ...options, requestModelId: originalModel?.requestModelId });
 		}
 	});
 }
