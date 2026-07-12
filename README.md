@@ -1,6 +1,6 @@
 # pi-antigravity-provider
 
-A dynamic, auto-syncing Google Antigravity (Cloud Code Assist) provider plugin for [`pi`](https://github.com/can1357/oh-my-pi).
+A dynamic, auto-syncing Google Antigravity (Cloud Code Assist) provider plugin for `pi` (based on upstream `oh-my-pi`).
 
 ## 💡 Design Philosophy
 
