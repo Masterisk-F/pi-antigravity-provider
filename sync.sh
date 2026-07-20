@@ -35,7 +35,22 @@ apply_patch 'accessToken: parsed.token,' 'accessToken: parsed.token ?? parsed.ac
 apply_patch '\[ANTIGRAVITY_DAILY_ENDPOINT, ANTIGRAVITY_SANDBOX_ENDPOINT\]' '\[ANTIGRAVITY_DAILY_ENDPOINT, ANTIGRAVITY_SANDBOX_ENDPOINT, DEFAULT_ENDPOINT\]' packages/ai/src/providers/google-gemini-cli.ts 'DEFAULT_ENDPOINT'
 apply_patch 'const CLOUD_CODE_ENDPOINT = "https://cloudcode-pa.googleapis.com";' 'const CLOUD_CODE_ENDPOINT = "https://daily-cloudcode-pa.googleapis.com";' packages/ai/src/registry/oauth/google-antigravity.ts 'daily-cloudcode-pa.googleapis.com'
 
+echo "Localizing pi-catalog/identity for preferredDialect..."
+cp packages/catalog/src/identity/classify.ts packages/catalog/src/identity/classify.fixed.ts
+cp packages/catalog/src/identity/family.ts packages/catalog/src/identity/family.fixed.ts
+cp packages/catalog/src/identity/dialect.ts packages/catalog/src/identity/dialect.fixed.ts
+
+# Fix internal import paths: add .js extension and target the fixed files
+apply_patch 'from "./classify"' 'from "./classify.fixed.js"' packages/catalog/src/identity/family.fixed.ts 'classify.fixed.js'
+apply_patch 'from "./family"' 'from "./family.fixed.js"' packages/catalog/src/identity/dialect.fixed.ts 'family.fixed.js'
+
+# Patch demotion.ts to import preferredDialect from local path instead of @oh-my-pi/pi-catalog/identity
+# The identity files are at packages/catalog/src/identity/, relative to packages/ai/src/dialect/ is ../../../catalog/src/identity/
+apply_patch 'import { preferredDialect } from "@oh-my-pi/pi-catalog/identity"' 'import { preferredDialect } from "../../../catalog/src/identity/dialect.fixed.ts"' packages/ai/src/dialect/demotion.ts '../../../catalog/src/identity/dialect.fixed'
+apply_patch 'import { preferredDialect } from "@oh-my-pi/pi-catalog/identity"' 'import { preferredDialect } from "../../../catalog/src/identity/dialect.fixed.ts"' packages/ai/src/dialect/inventory.ts '../../../catalog/src/identity/dialect.fixed'
+
 echo "Creating pi-utils polyfill..."
+
 echo 'export * from "@oh-my-pi/pi-ai";' > pi-utils-polyfill.ts
 cat packages/utils/src/fetch-retry.ts >> pi-utils-polyfill.ts
 cat packages/utils/src/stream.ts >> pi-utils-polyfill.ts
