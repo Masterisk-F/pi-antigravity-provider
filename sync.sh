@@ -75,10 +75,22 @@ echo 'export * from "./packages/omptype/src/index.ts";' > omptype-polyfill.ts
 # added by typebox@1.3.7+. They must be stripped from wire schemas because some
 # code paths (upgradeJsonSchemaTo202012 fast-path) preserve the original object
 # with these markers, and downstream JSON serialization may expose them.
-echo 'export function stripTypeBoxMarkers<T>(value: T): T {
+echo 'export function stripTypeBoxMarkers<T>(value: T, seen = new WeakMap()): T {
   if (value === null || typeof value !== "object") return value;
-  if (Array.isArray(value)) return value.map(stripTypeBoxMarkers) as any;
+  if (seen.has(value)) return seen.get(value) as T;
+
+  if (Array.isArray(value)) {
+    const arr: any[] = [];
+    seen.set(value, arr);
+    for (let i = 0; i < value.length; i++) {
+      arr[i] = stripTypeBoxMarkers(value[i], seen);
+    }
+    return arr as any;
+  }
+
   const result: Record<string, unknown> = {};
+  seen.set(value, result);
+
   for (const key of Object.getOwnPropertyNames(value)) {
     if (key.startsWith("~")) continue;
     const descriptor = Object.getOwnPropertyDescriptor(value, key);
@@ -91,19 +103,60 @@ echo 'export function stripTypeBoxMarkers<T>(value: T): T {
       if (descriptor.get) {
         const originalGet = descriptor.get;
         newDescriptor.get = function(this: unknown) {
-          return stripTypeBoxMarkers(originalGet.call(this));
+          return stripTypeBoxMarkers(originalGet.call(this), seen);
         };
       }
       if (descriptor.set) {
-        newDescriptor.set = descriptor.set;
+        const originalSet = descriptor.set;
+        newDescriptor.set = function(this: unknown, val: any) {
+          originalSet.call(this, stripTypeBoxMarkers(val, seen));
+        };
       }
       Object.defineProperty(result, key, newDescriptor);
     } else {
-      result[key] = stripTypeBoxMarkers(descriptor.value);
+      result[key] = stripTypeBoxMarkers(descriptor.value, seen);
     }
   }
   return result as T;
 }' > typebox-strip.ts
+
+echo "Running stripTypeBoxMarkers smoke tests..."
+cat << 'EOF' > test-strip.ts
+import { stripTypeBoxMarkers } from "./typebox-strip.ts";
+
+// 1. Basic marker stripping
+const obj = { "~optional": true, normal: 1 };
+const stripped = stripTypeBoxMarkers(obj);
+if ("~optional" in stripped) throw new Error("Failed to strip marker");
+
+// 2. Cyclic reference
+const cycle: any = { a: 1 };
+cycle.self = cycle;
+const strippedCycle = stripTypeBoxMarkers(cycle);
+if (strippedCycle.self !== strippedCycle) throw new Error("Failed to handle cyclic reference");
+
+// 3. Getter caching and memoization, setter symmetry
+let cached: any = null;
+const withGetter = {};
+Object.defineProperty(withGetter, "lazy", {
+  get() {
+    if (!cached) cached = { val: 42 };
+    return cached;
+  },
+  set(val) {
+    cached = val;
+  },
+  enumerable: true
+});
+const strippedGetter = stripTypeBoxMarkers(withGetter);
+if (strippedGetter.lazy !== strippedGetter.lazy) throw new Error("Getter object identity not preserved");
+
+strippedGetter.lazy = { "~optional": true, val: 100 };
+if ("~optional" in strippedGetter.lazy) throw new Error("Setter value not stripped");
+
+console.log("smoke tests passed.");
+EOF
+bun run test-strip.ts
 
 # strip 関数を wire.ts と同じディレクトリにコピー（相対 import で解決）
 cp typebox-strip.ts packages/ai/src/utils/schema/typebox-strip.ts
