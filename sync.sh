@@ -83,11 +83,23 @@ echo 'export function stripTypeBoxMarkers<T>(value: T): T {
     if (key.startsWith("~")) continue;
     const descriptor = Object.getOwnPropertyDescriptor(value, key);
     if (!descriptor) continue;
-    const val = descriptor.get ? undefined : (value as Record<string, unknown>)[key];
     if (descriptor.get || descriptor.set) {
-      Object.defineProperty(result, key, descriptor);
+      const newDescriptor: PropertyDescriptor = {
+        enumerable: descriptor.enumerable,
+        configurable: descriptor.configurable,
+      };
+      if (descriptor.get) {
+        const originalGet = descriptor.get;
+        newDescriptor.get = function(this: unknown) {
+          return stripTypeBoxMarkers(originalGet.call(this));
+        };
+      }
+      if (descriptor.set) {
+        newDescriptor.set = descriptor.set;
+      }
+      Object.defineProperty(result, key, newDescriptor);
     } else {
-      result[key] = stripTypeBoxMarkers(val);
+      result[key] = stripTypeBoxMarkers(descriptor.value);
     }
   }
   return result as T;
