@@ -91,8 +91,8 @@ echo 'export function stripTypeBoxMarkers<T>(value: T, seen = new WeakMap()): T 
   const result: Record<string, unknown> = {};
   seen.set(value, result);
 
-  for (const key of Object.getOwnPropertyNames(value)) {
-    if (key.startsWith("~")) continue;
+  for (const key of Reflect.ownKeys(value)) {
+    if (typeof key === "string" && key.startsWith("~")) continue;
     const descriptor = Object.getOwnPropertyDescriptor(value, key);
     if (!descriptor) continue;
     if (descriptor.get || descriptor.set) {
@@ -102,19 +102,22 @@ echo 'export function stripTypeBoxMarkers<T>(value: T, seen = new WeakMap()): T 
       };
       if (descriptor.get) {
         const originalGet = descriptor.get;
-        newDescriptor.get = function(this: unknown) {
-          return stripTypeBoxMarkers(originalGet.call(this), seen);
+        newDescriptor.get = function() {
+          return stripTypeBoxMarkers(originalGet.call(value), seen);
         };
       }
       if (descriptor.set) {
         const originalSet = descriptor.set;
-        newDescriptor.set = function(this: unknown, val: any) {
-          originalSet.call(this, stripTypeBoxMarkers(val, seen));
+        newDescriptor.set = function(_val: any) {
+          originalSet.call(value, stripTypeBoxMarkers(_val, seen));
         };
       }
       Object.defineProperty(result, key, newDescriptor);
     } else {
-      result[key] = stripTypeBoxMarkers(descriptor.value, seen);
+      Object.defineProperty(result, key, {
+        ...descriptor,
+        value: stripTypeBoxMarkers(descriptor.value, seen)
+      });
     }
   }
   return result as T;
@@ -153,6 +156,49 @@ if (strippedGetter.lazy !== strippedGetter.lazy) throw new Error("Getter object 
 
 strippedGetter.lazy = { "~optional": true, val: 100 };
 if ("~optional" in strippedGetter.lazy) throw new Error("Setter value not stripped");
+
+// 4. Property descriptor preservation (Q5)
+const nonEnum = {};
+Object.defineProperty(nonEnum, "hidden", {
+  value: { "~readonly": true, data: 1 },
+  enumerable: false,
+  configurable: false,
+  writable: false,
+});
+const strippedNonEnum = stripTypeBoxMarkers(nonEnum);
+const desc = Object.getOwnPropertyDescriptor(strippedNonEnum, "hidden")!;
+if (desc.enumerable !== false) throw new Error("Non-enumerable property became enumerable");
+if (desc.writable !== false) throw new Error("Non-writable property became writable");
+if (desc.configurable !== false) throw new Error("Non-configurable property became configurable");
+
+// 5. Symbol property preservation (Q2)
+const sym = Symbol.for("test.symbol");
+const withSymbol: any = { normal: 1 };
+withSymbol[sym] = { "~kind": "test", val: 42 };
+const strippedSym = stripTypeBoxMarkers(withSymbol);
+if (!(sym in strippedSym)) throw new Error("Symbol property dropped");
+if ("~kind" in strippedSym[sym]) throw new Error("Symbol property value not stripped");
+if (strippedSym[sym].val !== 42) throw new Error("Symbol property value corrupted");
+
+// 6. Getter this context (Q3)
+const original = { secret: 42 };
+Object.defineProperty(original, "derived", {
+  get() { return this.secret * 2; },
+  enumerable: true,
+});
+const strippedCtx = stripTypeBoxMarkers(original);
+if (strippedCtx.derived !== 84) throw new Error("Getter this context lost");
+
+// 7. Setter this context (Q4)
+const withSetter: any = { _data: 1 };
+Object.defineProperty(withSetter, "computed", {
+  get() { return this._data; },
+  set(val: any) { this._data = val; },
+  enumerable: true,
+});
+const strippedSetter = stripTypeBoxMarkers(withSetter);
+strippedSetter.computed = { "~optional": true, nested: 99 };
+if (typeof strippedSetter.computed !== "object") throw new Error("Setter this context lost");
 
 console.log("smoke tests passed.");
 EOF
