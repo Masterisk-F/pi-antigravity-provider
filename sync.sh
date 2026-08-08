@@ -47,7 +47,6 @@ apply_patch 'from "./family"' 'from "./family.fixed.js"' packages/catalog/src/id
 # Patch demotion.ts to import preferredDialect from local path instead of @oh-my-pi/pi-catalog/identity
 # The identity files are at packages/catalog/src/identity/, relative to packages/ai/src/dialect/ is ../../../catalog/src/identity/
 apply_patch 'import { preferredDialect } from "@oh-my-pi/pi-catalog/identity"' 'import { preferredDialect } from "../../../catalog/src/identity/dialect.fixed.ts"' packages/ai/src/dialect/demotion.ts '../../../catalog/src/identity/dialect.fixed'
-apply_patch 'import { preferredDialect } from "@oh-my-pi/pi-catalog/identity"' 'import { preferredDialect } from "../../../catalog/src/identity/dialect.fixed.ts"' packages/ai/src/dialect/inventory.ts '../../../catalog/src/identity/dialect.fixed'
 
 echo "Creating pi-utils polyfill..."
 
@@ -66,6 +65,42 @@ export const $flag = (name: string) => false;
 export const $env = (name: string) => process.env[name];
 EOF
 
+# omptype is a self-contained schema library used by google-gemini-cli.ts via
+# `import { type } from "@oh-my-pi/omptype"`. It must be inlined into the bundle:
+# externalizing it would have the namespace patch rewrite it to
+# @earendil-works/pi-ai, which does not export `type` at runtime.
+echo 'export * from "./packages/omptype/src/index.ts";' > omptype-polyfill.ts
+
+# TypeBox internal markers (~optional, ~readonly, ~kind) are non-enumerable properties
+# added by typebox@1.3.7+. They must be stripped from wire schemas because some
+# code paths (upgradeJsonSchemaTo202012 fast-path) preserve the original object
+# with these markers, and downstream JSON serialization may expose them.
+echo 'export function stripTypeBoxMarkers<T>(value: T): T {
+  if (value === null || typeof value !== "object") return value;
+  if (Array.isArray(value)) return value.map(stripTypeBoxMarkers) as any;
+  const result: Record<string, unknown> = {};
+  for (const key of Object.getOwnPropertyNames(value)) {
+    if (key.startsWith("~")) continue;
+    const descriptor = Object.getOwnPropertyDescriptor(value, key);
+    if (!descriptor) continue;
+    const val = descriptor.get ? undefined : (value as Record<string, unknown>)[key];
+    if (descriptor.get || descriptor.set) {
+      Object.defineProperty(result, key, descriptor);
+    } else {
+      result[key] = stripTypeBoxMarkers(val);
+    }
+  }
+  return result as T;
+}' > typebox-strip.ts
+
+# strip 関数を wire.ts と同じディレクトリにコピー（相対 import で解決）
+cp typebox-strip.ts packages/ai/src/utils/schema/typebox-strip.ts
+
+# wire.ts に stripTypeBoxMarkers を import し、toolWireSchema の両 return に適用する
+apply_patch 'import { stamp } from "./stamps";' 'import { stamp } from "./stamps";\nimport { stripTypeBoxMarkers } from "./typebox-strip";' packages/ai/src/utils/schema/wire.ts 'stripTypeBoxMarkers'
+apply_patch 'return arkToWireSchema(params);' 'return stripTypeBoxMarkers(arkToWireSchema(params));' packages/ai/src/utils/schema/wire.ts 'stripTypeBoxMarkers(arkToWireSchema'
+apply_patch 'return postProcessJsonSchema(upgraded);' 'return stripTypeBoxMarkers(postProcessJsonSchema(upgraded));' packages/ai/src/utils/schema/wire.ts 'stripTypeBoxMarkers(postProcessJsonSchema'
+
 echo "Installing dependencies to allow bundling..."
 bun install
 
@@ -79,6 +114,7 @@ EOF
 echo "Bundling with esbuild..."
 npx -y esbuild plugin-entry.ts --bundle --outfile="$EXT_DIR/plugin-bundled.js" --format=esm --platform=node \
   --alias:@oh-my-pi/pi-utils=./pi-utils-polyfill.ts \
+  --alias:@oh-my-pi/omptype=./omptype-polyfill.ts \
   --external:@oh-my-pi/* \
   --external:bun
 
