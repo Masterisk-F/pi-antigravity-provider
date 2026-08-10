@@ -79,16 +79,8 @@ echo 'export function stripTypeBoxMarkers<T>(value: T, seen = new WeakMap()): T 
   if (value === null || typeof value !== "object") return value;
   if (seen.has(value)) return seen.get(value) as T;
 
-  if (Array.isArray(value)) {
-    const arr: any[] = [];
-    seen.set(value, arr);
-    for (let i = 0; i < value.length; i++) {
-      arr[i] = stripTypeBoxMarkers(value[i], seen);
-    }
-    return arr as any;
-  }
-
-  const result: Record<string, unknown> = {};
+  const proto = Object.getPrototypeOf(value);
+  const result = Array.isArray(value) ? [] : Object.create(proto);
   seen.set(value, result);
 
   for (const key of Reflect.ownKeys(value)) {
@@ -204,6 +196,27 @@ strippedSetter.computed = { "~optional": true, nested: 99 };
 if (withSetter._data !== 1) throw new Error("Setter mutated original object!");
 if ("~optional" in strippedSetter.computed) throw new Error("Setter value not stripped");
 if (strippedSetter.computed.nested !== 99) throw new Error("Clone state not updated");
+
+// 8. Array testing (Q3 & Q2)
+const arr: any = [{ "~optional": true, val: 1 }, 2];
+arr.custom = { "~kind": "test", data: 42 };
+const strippedArr = stripTypeBoxMarkers(arr);
+if (!Array.isArray(strippedArr)) throw new Error("Array is no longer an array");
+if (strippedArr.length !== 2) throw new Error("Array length mismatch");
+if ("~optional" in strippedArr[0]) throw new Error("Array element marker not stripped");
+if ("~kind" in strippedArr.custom) throw new Error("Array custom property marker not stripped");
+if (strippedArr.custom.data !== 42) throw new Error("Array custom property data corrupted");
+
+// 9. Prototype chain preservation (Q1)
+class CustomClass {
+  method() { return 42; }
+}
+const inst = new CustomClass();
+(inst as any).val = { "~optional": true, inner: 1 };
+const strippedInst = stripTypeBoxMarkers(inst);
+if (!(strippedInst instanceof CustomClass)) throw new Error("Prototype chain lost");
+if (strippedInst.method() !== 42) throw new Error("Method not inherited");
+if ("~optional" in (strippedInst as any).val) throw new Error("Marker not stripped in class instance");
 
 console.log("smoke tests passed.");
 EOF
