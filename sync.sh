@@ -102,14 +102,14 @@ echo 'export function stripTypeBoxMarkers<T>(value: T, seen = new WeakMap()): T 
       };
       if (descriptor.get) {
         const originalGet = descriptor.get;
-        newDescriptor.get = function() {
-          return stripTypeBoxMarkers(originalGet.call(value), seen);
+        newDescriptor.get = function(this: unknown) {
+          return stripTypeBoxMarkers(originalGet.call(this), seen);
         };
       }
       if (descriptor.set) {
         const originalSet = descriptor.set;
-        newDescriptor.set = function(_val: any) {
-          originalSet.call(value, stripTypeBoxMarkers(_val, seen));
+        newDescriptor.set = function(this: unknown, _val: any) {
+          originalSet.call(this, stripTypeBoxMarkers(_val, seen));
         };
       }
       Object.defineProperty(result, key, newDescriptor);
@@ -180,7 +180,7 @@ if (!(sym in strippedSym)) throw new Error("Symbol property dropped");
 if ("~kind" in strippedSym[sym]) throw new Error("Symbol property value not stripped");
 if (strippedSym[sym].val !== 42) throw new Error("Symbol property value corrupted");
 
-// 6. Getter this context (Q3)
+// 6. Getter this context — クローン状態の反映（stale reads 検出）
 const original = { secret: 42 };
 Object.defineProperty(original, "derived", {
   get() { return this.secret * 2; },
@@ -188,8 +188,11 @@ Object.defineProperty(original, "derived", {
 });
 const strippedCtx = stripTypeBoxMarkers(original);
 if (strippedCtx.derived !== 84) throw new Error("Getter this context lost");
+strippedCtx.secret = 100;                       // クローンのみ変更
+if (strippedCtx.derived !== 200) throw new Error("Getter reads stale original state");
+if (original.secret !== 42) throw new Error("Original mutated by clone getter");
 
-// 7. Setter this context (Q4)
+// 7. Setter this context — クローンへの書き込みがオリジナルを壊さない
 const withSetter: any = { _data: 1 };
 Object.defineProperty(withSetter, "computed", {
   get() { return this._data; },
@@ -198,7 +201,9 @@ Object.defineProperty(withSetter, "computed", {
 });
 const strippedSetter = stripTypeBoxMarkers(withSetter);
 strippedSetter.computed = { "~optional": true, nested: 99 };
-if (typeof strippedSetter.computed !== "object") throw new Error("Setter this context lost");
+if (withSetter._data !== 1) throw new Error("Setter mutated original object!");
+if ("~optional" in strippedSetter.computed) throw new Error("Setter value not stripped");
+if (strippedSetter.computed.nested !== 99) throw new Error("Clone state not updated");
 
 console.log("smoke tests passed.");
 EOF
