@@ -44,9 +44,7 @@ export * from "./packages/utils/src/mime.ts";
 
 // Environment & flags
 export const $flag = (_name: string) => false;
-export const $env = (name: string) => process["env"][name];
-export const $envExact = (name: string) => process["env"][name];
-export const $envpos = (name: string) => process["env"][name];
+export const $env = (n: string) => process.env[n], $envExact = $env, $envpos = $env;
 export const $pickenv = (...names: string[]) => {
   for (const name of names) {
     const val = process["env"][name];
@@ -71,17 +69,8 @@ export const isEnoent = (err: unknown) => Boolean(err && typeof err === "object"
 export const isSqliteCorruptionError = () => false;
 
 // Logging stub
-export const logger = {
-  debug: () => {},
-  info: () => {},
-  warn: () => {},
-  error: () => {},
-};
-
-export const debug = () => {};
-export const info = () => {};
-export const warn = () => {};
-export const error = () => {};
+const noop = () => {};
+export const logger = { debug: noop, info: noop, warn: noop, error: noop }, debug = noop, info = noop, warn = noop, error = noop;
 
 // CA / Fetch helpers
 export const wrapFetchForExtraCa = (f: any) => f ?? fetch;
@@ -91,20 +80,7 @@ export const withExtraCaInit = (init: any) => init;
 // String helpers
 export const truncate = (str: string, maxLen: number) => str.length > maxLen ? str.slice(0, maxLen) + "..." : str;
 
-function isPlainObject(val: object): val is Record<string, unknown> {
-  return Object.getPrototypeOf(val) === Object.prototype || Array.isArray(val);
-}
-
-export function structuredCloneJSON<T>(value: T): T {
-  if (!value || typeof value !== "object") return value;
-  if (isPlainObject(value)) {
-    try {
-      return structuredClone(value);
-    } catch {
-    }
-  }
-  return JSON.parse(JSON.stringify(value)) as T;
-}
+export const structuredCloneJSON = <T>(v: T): T => structuredClone(v);
 
 // LRU Cache
 export class LRUCache<K, V> extends Map<K, V> {
@@ -149,13 +125,6 @@ export const $ = () => {};
 export const Cookie = {};
 export const CookieMap = class {};
 export const YAML = { parse: () => ({}), stringify: () => "" };
-export default {
-  sleep,
-  $,
-  Cookie,
-  CookieMap,
-  YAML,
-};
 EOF
 
 # TypeBox internal markers (~optional, ~readonly, ~kind) are non-enumerable properties
