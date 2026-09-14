@@ -22,54 +22,141 @@ apply_patch() {
   fi
 }
 
-echo "Localizing internal dependencies..."
-cp packages/catalog/src/wire/gemini-headers.ts packages/ai/src/registry/oauth/gemini-headers.ts
-cp packages/catalog/src/wire/gemini-headers.ts packages/ai/src/providers/gemini-headers.ts
-apply_patch '@oh-my-pi/pi-catalog/wire/gemini-headers' './gemini-headers.ts' packages/ai/src/registry/oauth/google-antigravity.ts './gemini-headers.ts'
-apply_patch '@oh-my-pi/pi-catalog/wire/gemini-headers' './gemini-headers.ts' packages/ai/src/providers/google-gemini-cli.ts './gemini-headers.ts'
-
 echo "Patching google-gemini-cli.ts for pi compatibility..."
 apply_patch '"token?": optionalCredentialString,' '"token?": optionalCredentialString,\n\t"access?": optionalCredentialString,' packages/ai/src/providers/google-gemini-cli.ts '"access?": optionalCredentialString'
 apply_patch 'if (parsed.token === undefined' 'if ((parsed.token ?? parsed.access) === undefined' packages/ai/src/providers/google-gemini-cli.ts 'parsed.access'
 apply_patch 'accessToken: parsed.token,' 'accessToken: parsed.token ?? parsed.access!,' packages/ai/src/providers/google-gemini-cli.ts 'parsed.access!'
 apply_patch '\[ANTIGRAVITY_DAILY_ENDPOINT, ANTIGRAVITY_SANDBOX_ENDPOINT\]' '\[ANTIGRAVITY_DAILY_ENDPOINT, ANTIGRAVITY_SANDBOX_ENDPOINT, DEFAULT_ENDPOINT\]' packages/ai/src/providers/google-gemini-cli.ts 'DEFAULT_ENDPOINT'
-apply_patch 'const CLOUD_CODE_ENDPOINT = "https://cloudcode-pa.googleapis.com";' 'const CLOUD_CODE_ENDPOINT = "https://daily-cloudcode-pa.googleapis.com";' packages/ai/src/registry/oauth/google-antigravity.ts 'daily-cloudcode-pa.googleapis.com'
 
-echo "Localizing pi-catalog/identity for preferredDialect..."
-cp packages/catalog/src/identity/classify.ts packages/catalog/src/identity/classify.fixed.ts
-cp packages/catalog/src/identity/family.ts packages/catalog/src/identity/family.fixed.ts
-cp packages/catalog/src/identity/dialect.ts packages/catalog/src/identity/dialect.fixed.ts
+echo "Creating polyfills and stubs..."
 
-# Fix internal import paths: add .js extension and target the fixed files
-apply_patch 'from "./classify"' 'from "./classify.fixed.js"' packages/catalog/src/identity/family.fixed.ts 'classify.fixed.js'
-apply_patch 'from "./family"' 'from "./family.fixed.js"' packages/catalog/src/identity/dialect.fixed.ts 'family.fixed.js'
+cat << 'EOF' > pi-utils-polyfill.ts
+export * from "./packages/utils/src/fetch-retry.ts";
+export * from "./packages/utils/src/stream.ts";
+export * from "./packages/utils/src/abortable.ts";
+export * from "./packages/utils/src/json-parse.ts";
+export * from "./packages/utils/src/json.ts";
+export * from "./packages/utils/src/type-guards.ts";
+export * from "./packages/utils/src/binary.ts";
+export * from "./packages/utils/src/sanitize-text.ts";
+export * from "./packages/utils/src/peek-file.ts";
+export * from "./packages/utils/src/mime.ts";
 
-# Patch demotion.ts to import preferredDialect from local path instead of @oh-my-pi/pi-catalog/identity
-# The identity files are at packages/catalog/src/identity/, relative to packages/ai/src/dialect/ is ../../../catalog/src/identity/
-apply_patch 'import { preferredDialect } from "@oh-my-pi/pi-catalog/identity"' 'import { preferredDialect } from "../../../catalog/src/identity/dialect.fixed.ts"' packages/ai/src/dialect/demotion.ts '../../../catalog/src/identity/dialect.fixed'
+// Environment & flags
+export const $flag = (_name: string) => false;
+export const $env = (name: string) => process["env"][name];
+export const $envExact = (name: string) => process["env"][name];
+export const $envpos = (name: string) => process["env"][name];
+export const $pickenv = (...names: string[]) => {
+  for (const name of names) {
+    const val = process["env"][name];
+    if (val !== undefined && val !== "") return val;
+  }
+  return undefined;
+};
 
-echo "Creating pi-utils polyfill..."
+// Application identity
+export const USER_AGENT = "oh-my-pi";
+export const getAppName = () => "pi";
+export const getInstallId = () => "pi-installation";
+export const getAgentDbPath = () => "";
+export const getModelDbPath = () => "";
+export const getLogsDir = () => "";
+export const getAgentDir = () => "";
+export const getProviderInFlightRoot = () => "";
+export const isBunTestRuntime = () => false;
 
-echo 'export * from "@oh-my-pi/pi-ai";' > pi-utils-polyfill.ts
-cat packages/utils/src/fetch-retry.ts >> pi-utils-polyfill.ts
-cat packages/utils/src/stream.ts >> pi-utils-polyfill.ts
-cat packages/utils/src/abortable.ts >> pi-utils-polyfill.ts
-cat packages/utils/src/json-parse.ts >> pi-utils-polyfill.ts
-cat packages/utils/src/json.ts >> pi-utils-polyfill.ts
-cat packages/utils/src/type-guards.ts >> pi-utils-polyfill.ts
-cat << 'EOF' >> pi-utils-polyfill.ts
+// Error helpers
+export const isEnoent = (err: unknown) => Boolean(err && typeof err === "object" && "code" in err && (err as any).code === "ENOENT");
+export const isSqliteCorruptionError = () => false;
 
-// Feature flags default to false to disable experimental upstream features gracefully
-export const $flag = (name: string) => false;
-// Fallback to real environment variables for upstream configuration
-export const $env = (name: string) => process.env[name];
+// Logging stub
+export const logger = {
+  debug: () => {},
+  info: () => {},
+  warn: () => {},
+  error: () => {},
+};
+
+export const debug = () => {};
+export const info = () => {};
+export const warn = () => {};
+export const error = () => {};
+
+// CA / Fetch helpers
+export const wrapFetchForExtraCa = (f: any) => f ?? fetch;
+export const resolveExtraCa = () => undefined;
+export const withExtraCaInit = (init: any) => init;
+
+// String helpers
+export const truncate = (str: string, maxLen: number) => str.length > maxLen ? str.slice(0, maxLen) + "..." : str;
+
+function isPlainObject(val: object): val is Record<string, unknown> {
+  return Object.getPrototypeOf(val) === Object.prototype || Array.isArray(val);
+}
+
+export function structuredCloneJSON<T>(value: T): T {
+  if (!value || typeof value !== "object") return value;
+  if (isPlainObject(value)) {
+    try {
+      return structuredClone(value);
+    } catch {
+    }
+  }
+  return JSON.parse(JSON.stringify(value)) as T;
+}
+
+// LRU Cache
+export class LRUCache<K, V> extends Map<K, V> {
+  private max: number;
+  constructor(max = 100) {
+    super();
+    this.max = max;
+  }
+  override get(key: K): V | undefined {
+    if (!super.has(key)) return undefined;
+    const val = super.get(key)!;
+    super.delete(key);
+    super.set(key, val);
+    return val;
+  }
+  override set(key: K, value: V): this {
+    if (super.has(key)) super.delete(key);
+    super.set(key, value);
+    if (this.size > this.max) {
+      const first = this.keys().next().value;
+      if (first !== undefined) this.delete(first);
+    }
+    return this;
+  }
+}
 EOF
 
-# omptype is a self-contained schema library used by google-gemini-cli.ts via
-# `import { type } from "@oh-my-pi/omptype"`. It must be inlined into the bundle:
-# externalizing it would have the namespace patch rewrite it to
-# @earendil-works/pi-ai, which does not export `type` at runtime.
-echo 'export * from "./packages/omptype/src/index.ts";' > omptype-polyfill.ts
+cat << 'EOF' > pi-natives-stub.ts
+export class NativeOAuthCallback {
+  constructor(_opts: any) {}
+  async start() { return false; }
+  async dispose() {}
+  cancel() {}
+  async waitForCallback() { throw new Error("Native callback not supported"); }
+}
+export default {};
+EOF
+
+cat << 'EOF' > bun-polyfill.ts
+export const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+export const $ = () => {};
+export const Cookie = {};
+export const CookieMap = class {};
+export const YAML = { parse: () => ({}), stringify: () => "" };
+export default {
+  sleep,
+  $,
+  Cookie,
+  CookieMap,
+  YAML,
+};
+EOF
 
 # TypeBox internal markers (~optional, ~readonly, ~kind) are non-enumerable properties
 # added by typebox@1.3.7+. They must be stripped from wire schemas because some
@@ -235,7 +322,24 @@ bun install
 
 echo "Creating entry point..."
 cat << 'EOF' > plugin-entry.ts
-export { loginAntigravity, refreshAntigravityToken } from "./packages/ai/src/registry/oauth/google-antigravity.ts";
+import { authPolicyFor } from "./packages/catalog/src/compat/auth.ts";
+import { buildProviderDefinition } from "./packages/ai/src/registry/build.ts";
+
+const antigravityDef = buildProviderDefinition(authPolicyFor("google-antigravity")!);
+
+export async function loginAntigravity(callbacks: any) {
+  if (!antigravityDef.login) throw new Error("No login handler configured for google-antigravity");
+  return antigravityDef.login(callbacks);
+}
+
+export async function refreshAntigravityToken(refreshTokenOrCred: any, projectId?: string) {
+  if (!antigravityDef.refreshToken) throw new Error("No refresh handler configured for google-antigravity");
+  const creds = typeof refreshTokenOrCred === "string"
+    ? { access: "", refresh: refreshTokenOrCred, expires: 0, projectId }
+    : refreshTokenOrCred;
+  return antigravityDef.refreshToken(creds);
+}
+
 export { streamGoogleGeminiCli } from "./packages/ai/src/providers/google-gemini-cli.ts";
 export { getBundledModels } from "./packages/catalog/src/models.ts";
 EOF
@@ -243,22 +347,15 @@ EOF
 echo "Bundling with esbuild..."
 npx -y esbuild plugin-entry.ts --bundle --outfile="$EXT_DIR/plugin-bundled.js" --format=esm --platform=node \
   --alias:@oh-my-pi/pi-utils=./pi-utils-polyfill.ts \
-  --alias:@oh-my-pi/omptype=./omptype-polyfill.ts \
-  --external:@oh-my-pi/* \
-  --external:bun
-
-echo "Patching namespaces in bundled file..."
-cd "$EXT_DIR"
-# All externalized @oh-my-pi/* imports (pi-catalog/models, pi-ai) actually come from @earendil-works/pi-ai in the runtime
-sed -i -E 's|@oh-my-pi/[a-zA-Z0-9/-]+|@earendil-works/pi-ai|g' plugin-bundled.js
-if grep -q '@oh-my-pi' plugin-bundled.js; then
-  echo "ERROR: Failed to completely patch @oh-my-pi namespace in bundle."
-  exit 1
-fi
-if ! grep -q '@earendil-works/pi-ai' plugin-bundled.js; then
-  echo "ERROR: Namespace replacement did not result in expected @earendil-works/pi-ai imports."
-  exit 1
-fi
+  --alias:@oh-my-pi/pi-utils/lru=./pi-utils-polyfill.ts \
+  --alias:@oh-my-pi/pi-utils/logger=./pi-utils-polyfill.ts \
+  --alias:@oh-my-pi/pi-utils/type-guards=./pi-utils-polyfill.ts \
+  --alias:@oh-my-pi/pi-utils/fetch-retry=./pi-utils-polyfill.ts \
+  --alias:@oh-my-pi/pi-catalog=./packages/catalog/src \
+  --alias:@oh-my-pi/omptype=./packages/omptype/src/index.ts \
+  --alias:@oh-my-pi/pi-ai=./packages/ai/src \
+  --alias:@oh-my-pi/pi-natives=./pi-natives-stub.ts \
+  --alias:bun=./bun-polyfill.ts
 
 echo "Cleaning up..."
 rm -rf "$TMP_DIR"
