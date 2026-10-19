@@ -54,6 +54,8 @@ export const $pickenv = (...names: string[]) => {
 };
 
 // Application identity
+export const APP_NAME: string = "pi";
+export const APP_URL: string = "https://github.com/can1357/oh-my-pi";
 export const USER_AGENT = "oh-my-pi";
 export const getAppName = () => "pi";
 export const getInstallId = () => "pi-installation";
@@ -79,8 +81,18 @@ export const withExtraCaInit = (init: any) => init;
 
 // String helpers
 export const truncate = (str: string, maxLen: number) => str.length > maxLen ? str.slice(0, maxLen) + "..." : str;
+export const slugify = (input: string, options?: { maxLength?: number }): string => {
+  if (options?.maxLength !== undefined && !(Number.isInteger(options.maxLength) && options.maxLength >= 0)) {
+    throw new RangeError(`slugify maxLength must be a non-negative integer, got ${options.maxLength}`);
+  }
+  const slug = input.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
+  return options?.maxLength === undefined ? slug : slug.slice(0, options.maxLength).replace(/-+$/g, "");
+};
 
 export const structuredCloneJSON = <T>(v: T): T => structuredClone(v);
+export function cloneJsonTree<T>(value: T): T {
+  return structuredCloneJSON(value);
+}
 
 // LRU Cache
 export class LRUCache<K, V> extends Map<K, V> {
@@ -116,6 +128,13 @@ export class NativeOAuthCallback {
   cancel() {}
   async waitForCallback() { throw new Error("Native callback not supported"); }
 }
+
+// Apple Foundation Models are not available outside the native binding.
+const unsupported = () => { throw new Error("Apple Foundation Models unavailable"); };
+export const appleFmAvailability = async () => "unsupported";
+export const appleFmCancel = (_handle: number) => {};
+export const appleFmGenerate = (_request: string, _onEvent: (err: null | Error, event: string) => void) => unsupported();
+
 export default {};
 EOF
 
@@ -320,6 +339,7 @@ npx -y esbuild plugin-entry.ts --bundle --outfile="$EXT_DIR/plugin-bundled.js" -
   --alias:@oh-my-pi/pi-utils/logger=./pi-utils-polyfill.ts \
   --alias:@oh-my-pi/pi-utils/type-guards=./pi-utils-polyfill.ts \
   --alias:@oh-my-pi/pi-utils/fetch-retry=./pi-utils-polyfill.ts \
+  --alias:@oh-my-pi/pi-utils/json-parse=./pi-utils-polyfill.ts \
   --alias:@oh-my-pi/pi-catalog=./packages/catalog/src \
   --alias:@oh-my-pi/omptype=./packages/omptype/src/index.ts \
   --alias:@oh-my-pi/pi-ai=./packages/ai/src \
